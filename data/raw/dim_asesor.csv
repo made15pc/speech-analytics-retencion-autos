@@ -1,0 +1,13 @@
+asesor_id,nivel,supervisor_id,turno,antiguedad_meses,costo_hora_soles
+A01,senior,S1,manana,29,30.0
+A02,semi,S1,intermedio,20,25.0
+A03,junior,S1,tarde,4,21.0
+A04,semi,S1,intermedio,14,25.0
+A05,senior,S2,intermedio,45,30.0
+A06,junior,S2,tarde,6,21.0
+A07,semi,S2,manana,8,25.0
+A08,junior,S2,medio,5,21.0
+A09,senior,S3,tarde,34,30.0
+A10,semi,S3,manana,8,25.0
+A11,junior,S3,medio,4,21.0
+A12,semi,S3,medio,24,25.0
