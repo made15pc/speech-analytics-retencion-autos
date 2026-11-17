@@ -47,6 +47,20 @@ DESCRIPCION_OFERTA = {
 }
 COMPETIDORES_FICTICIOS = ["Inti Seguros", "Seguros Pacha", "Qhapaq Seguros", "otra aseguradora"]
 
+MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+         "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+def fecha_texto(valor) -> str:
+    f = pd.to_datetime(valor)
+    return f"{f.day} de {MESES[f.month - 1]} de {f.year}"
+
+
+def motivo_claro(llamada_id) -> bool:
+    """60 % de las llamadas: el cliente explica su motivo con claridad. 40 %: lo insinúa.
+    Determinista según el ID (reproducible y recalculable al validar)."""
+    return int(str(llamada_id)[1:]) % 10 >= 4
+
 SISTEMA = """Eres guionista de llamadas realistas de un call center de seguros vehiculares en Perú.
 Escribes transcripciones de llamadas al área de Retención de la empresa ficticia "AutoSegura Perú".
 Reglas:
@@ -54,9 +68,12 @@ Reglas:
 - Incluye muletillas y frases cortadas con moderación ("ya", "eh", "o sea", "a ver", "ajá").
 - NO uses etiquetas ni nombres técnicos (nunca escribas "motivo:", "aumento_prima", "oferta", etc.).
   El motivo y la conducta deben inferirse de la conversación, como en una llamada real.
+- Escribe "DNI" y "placa" como palabras normales y enmascara solo el valor (por ejemplo: "mi DNI es [DNI]", "la placa es [PLACA]").
 - Datos personales siempre enmascarados: [NOMBRE_CLIENTE], [DNI], [PLACA], [TARJETA], [CORREO].
   El asesor sí puede decir su propio nombre de pila (inventado).
 - Cumple EXACTAMENTE la ficha: lo que la ficha dice que no ocurre, no debe ocurrir.
+- No repitas el mismo resumen o la misma confirmación más de una vez. Si la llamada debe ser larga, llénala con búsquedas en el sistema, esperas, dudas del cliente, desvíos de tema y comentarios laterales; nunca con repeticiones.
+- Usa únicamente la fecha de la llamada que da la ficha. No inventes otra fecha como "hoy"; cualquier fecha futura que se mencione debe ser coherente con ella.
 - Responde solo con JSON: {"turnos": [{"hablante": "asesor"|"cliente", "texto": "..."}]}"""
 
 
@@ -78,9 +95,14 @@ def construir_ficha(r: pd.Series) -> str:
                          "(el cliente puede notarlo).")
     else:
         pasos.append("El asesor NO ofrece ninguna alternativa; solo toma la solicitud de baja.")
-    pasos.append("El cliente ACEPTA quedarse con la alternativa." if r.cliente_acepta else
-                 "El cliente NO acepta y mantiene la cancelación.")
-    if r.cliente_acepta:
+    if r.cliente_acepta and r.ofrece_alternativa:
+        pasos.append("El cliente ACEPTA quedarse con la alternativa.")
+    elif r.cliente_acepta:
+        pasos.append("El cliente, sin que el asesor le ofrezca nada, decide por su cuenta no cancelar "
+                     "por ahora (por ejemplo, después de desahogarse); el asesor solo toma nota.")
+    else:
+        pasos.append("El cliente NO acepta y mantiene la cancelación.")
+    if r.cliente_acepta and r.ofrece_alternativa:
         pasos.append("Al final el asesor resume las nuevas condiciones (monto, fecha de aplicación) "
                      "y pide confirmación explícita." if r.confirma_acuerdo else
                      "El asesor NO resume ni confirma las condiciones del acuerdo; cierra rápido.")
@@ -99,6 +121,8 @@ def construir_ficha(r: pd.Series) -> str:
     palabras = int(min(1400, max(250, r.conversacion_seg * 2.2)))
     return f"""FICHA DE LA LLAMADA
 - Tipo: {"devolución de llamada (el cliente dejó una solicitud web)" if r.tipo == "callback" else "llamada entrante"}
+- Fecha de la llamada: {fecha_texto(r.fecha_hora_ingreso)}
+- Claridad del cliente al explicar su motivo: {"explica su motivo con claridad" if motivo_claro(r.get("llamada_id", r.name)) else "NO dice su motivo de forma directa: lo da en partes o lo insinúa, y puede mencionar otros temas de pasada. Aun así, el motivo real debe aparecer al menos dos veces con detalle suficiente para identificarlo como el principal, y los otros temas deben quedar claramente como secundarios o descartados por el propio cliente (no dudes entre motivos)"}
 - Cliente: plan {r.plan}, prima S/ {r.prima_mensual_soles:.0f} al mes, región {r.region}
 - Motivo real del cliente: {DESCRIPCION_MOTIVO[r.motivo_principal]}.{sec}
 - Ánimo del cliente al inicio: {r.sentimiento_inicio}. Ánimo al final: {r.sentimiento_fin}.
@@ -115,6 +139,10 @@ def muestra_estratificada(datos: Path, n: int, semilla: int) -> pd.DataFrame:
     df = (V.merge(L[["llamada_id", "tipo", "fecha_hora_ingreso", "espera_seg"]], on="llamada_id")
            .merge(D[["asesor_id", "nivel"]], on="asesor_id"))
     df["estrato"] = df.motivo_principal + "|" + df.cliente_acepta.astype(str)
+    if n < 100:  # modo piloto: n llamadas de n estratos distintos
+        m = df.groupby("estrato").sample(1, random_state=semilla).sample(n, random_state=semilla)
+        m["peso_muestral"] = 1.0
+        return m.reset_index(drop=True)
     # asignación proporcional con piso de 6 por estrato
     prop = df.estrato.value_counts(normalize=True)
     cuota = (prop * n).round().clip(lower=6).astype(int)
@@ -159,7 +187,7 @@ def generar_uno(cliente, modelo: str, r: pd.Series, reintentos: int = 4) -> dict
                 response_format={"type": "json_object"},
             )
             turnos = json.loads(resp.choices[0].message.content)["turnos"]
-            assert turnos and all(t["hablante"] in ("asesor", "cliente") for t in turnos)
+            assert turnos and all(t["hablante"] in ("asesor", "cliente") and str(t.get("texto", "")).strip() for t in turnos)
             uso = resp.usage
             return dict(llamada_id=r.llamada_id, modelo=modelo, turnos=turnos,
                         tokens_entrada=uso.prompt_tokens, tokens_salida=uso.completion_tokens)

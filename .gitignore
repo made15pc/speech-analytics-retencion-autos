@@ -1,0 +1,10 @@
+.env
+__pycache__/
+data/dialogos_piloto/
+data/audio/
+*.wav
+*.mp3
+data/dialogos/*.antes_de_normalizar
+data/dialogos/dialogos_original_sin_normalizar.jsonl
+data/dialogos/qa/qa_revisar.csv
+.ipynb_checkpoints/
