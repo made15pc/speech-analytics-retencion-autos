@@ -28,10 +28,14 @@ src/control_calidad.py         [2c] control automático: fallos duros y alertas 
 src/preparar_audio.py          [6b] guiones hablables: valores ficticios para [DNI], [PLACA]… (sin API)
 src/sintetizar_audio.py        [6c-6d] voz estéreo (asesor izquierdo, cliente derecho) con TTS; reanuda desde caché
 src/degradar_audio.py          [6d] versión «telefónica» simulada: 8 kHz, 300-3400 Hz, ruido, mu-law (sin API)
+src/transcribir_audio.py       [6e] transcripción por canal (ASR) con `gpt-transcribe`; reanuda desde lo ya hecho
+src/calcular_wer.py            [6e] WER en tres niveles de normalización (sin API)
 notebooks/01_datos_y_dialogos.ipynb   ejecución en Colab (fases 1 a 5b)
 data/raw/                      CSV del modelo estrella
 data/dialogos/                 402 diálogos, muestra estratificada, QA, selección de 57 llamadas y sus guiones hablables
 data/audio/                    audio de las 57 llamadas (NO versionado, ≈ 1 GB; ver docs/02_bitacora.md)
+data/transcripciones/        transcripción por canal (texto) de las versiones limpia y telefónica
+data/resultados/               WER por versión y canal; diferencias más frecuentes
 ```
 
 ## Avance
@@ -43,8 +47,8 @@ data/audio/                    audio de las 57 llamadas (NO versionado, ≈ 1 GB
 | 5. Generación de 402 diálogos (≈ US$ 0.55) | ✅ |
 | 5b. Normalización y control de calidad | ✅ |
 | 6a–6d. Voz sintética estéreo: 57 llamadas, versión limpia y «telefónica» simulada | ✅ |
-| 6e. Transcripción por canal (ASR) + WER | ⏳ siguiente |
-| 7. Extracción de insights con LLM (salida estructurada) | ⏳ |
+| 6e. Transcripción por canal (ASR) + WER | ✅ WER 1.09 % (limpia) y 1.37 % (telefónica); error dominante: omisiones |
+| 7. Extracción de insights con LLM (salida estructurada) | ⏳ siguiente |
 | 8. Validación (verdad de terreno + auditoría manual + CallCenterEN) | ⏳ |
 | 9. Modelo y dashboard en Power BI + medidas DAX | ⏳ |
 | 10. Informe de hallazgos y recomendaciones | ⏳ |
@@ -64,6 +68,8 @@ python src/control_calidad.py --dialogos data/dialogos/dialogos.jsonl --muestra 
 python src/preparar_audio.py                          # guiones hablables (sin API); usa data/dialogos/seleccion_audio.csv
 python src/sintetizar_audio.py --ids L023691          # una llamada de prueba (API de voz); sin --ids: las 57
 python src/degradar_audio.py                          # versión telefónica simulada (sin API, determinista)
+python src/transcribir_audio.py --versiones limpio telefonico   # ASR por canal (API de transcripción; reanuda)
+python src/calcular_wer.py                            # WER y diferencias frecuentes (sin API)
 ```
 
 Los diálogos ya generados están versionados en `data/dialogos/`: no hace falta volver a gastar en la API para seguir con las fases siguientes. El audio no se versiona por tamaño; regenerarlo con `sintetizar_audio.py` usa la API de voz y no es reproducible bit a bit.

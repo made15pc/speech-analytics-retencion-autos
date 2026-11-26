@@ -13,8 +13,8 @@
 | 5. Generación de los 402 diálogos | ✅ cerrada: 0 errores, 267,463 tokens de entrada y 1,048,921 de salida, ≈ US$ 0.55 |
 | 5b. Normalización y control de calidad | ✅ cerrada (ver sección 4b) |
 | 6a–6d. Voz sintética estéreo: 57 llamadas, versión limpia y «telefónica» simulada | ✅ cerradas (ver sección 4c) |
-| **6e. Transcripción por canal (ASR) + WER** | **⏳ siguiente paso** |
-| 7. Extracción de insights con LLM (salida estructurada) | ⏳ |
+| 6e. Transcripción por canal (ASR) + WER | ✅ hecho: WER 1.09 % (limpia) y 1.37 % (telefónica); detalle en la sección 4d |
+| **7. Extracción de insights con LLM (salida estructurada)** | **⏳ siguiente paso** |
 | 8. Validación (verdad de terreno + auditoría manual + CallCenterEN) | ⏳ |
 | 9. Modelo y dashboard en Power BI + medidas DAX | ⏳ |
 | 10. Informe de hallazgos y recomendaciones (deck de 5 a 7 láminas) | ⏳ |
@@ -36,8 +36,9 @@ Colab borra `/content` al cerrar la sesión. El código vive en este repositorio
    os.environ["OPENAI_API_KEY"] = userdata.get("OPENAI_API_KEY")
    MODELO = "gpt-6-luna"
    ```
-3. Los datos ya están en `data/raw/` (tablas operativas) y `data/dialogos/` (402 diálogos normalizados, muestra, QA, selección de audio y guiones hablables). **No hay que regenerar los diálogos.** Para el 6e hace falta además el audio (`data/audio/`, ≈ 1 GB), que **no se versiona**: vive en Drive y se puede regenerar con `preparar_audio.py` → `sintetizar_audio.py` (API de voz, poco más de US$ 3 en la corrida original; no es reproducible bit a bit) → `degradar_audio.py` (sin API, determinista).
+3. Los datos ya están en `data/raw/` (tablas operativas) y `data/dialogos/` (402 diálogos normalizados, muestra, QA, selección de audio y guiones hablables). **No hay que regenerar los diálogos.** Las transcripciones de la fase 6e (texto) están versionadas en `data/transcripciones/`: **la fase 7 no necesita el audio ni la API de transcripción**. El audio (`data/audio/`, ≈ 1 GB) **no se versiona**: vive en Drive y solo hace falta para repetir el 6e; se puede regenerar con `preparar_audio.py` → `sintetizar_audio.py` (API de voz, poco más de US$ 3 en la corrida original; no es reproducible bit a bit) → `degradar_audio.py` (sin API, determinista).
 4. Si se reinicia el kernel y falla un `import`, ejecutar la celda de recuperación del notebook (fija la ruta de forma absoluta).
+5. Si hay respaldo en Drive (`MyDrive/speech-analytics-retencion-autos`), la restauración **liviana** tarda menos de 1 minuto: copiar `data/dialogos`, `data/transcripciones` y `src/*.py`. No copiar todo el audio ni el caché de turnos (tardó más de 10 minutos); solo si hay que repetir el 6e.
 
 ## 3. Decisiones tomadas
 
@@ -99,6 +100,36 @@ Diseño final y resultado. Difiere del diseño inicial en tres puntos: se usaron
 - **Versión telefónica (simulada), 57 llamadas:** 24 → 8 kHz; pasa-banda Butterworth de orden 4 de 300 a 3400 Hz; ruido blanco filtrado en la misma banda, a una SNR de 20 dB respecto del RMS del habla activa de cada canal (ruido independiente por canal); compresión mu-law (mu = 255, 8 bits; aproximación de G.711, no el códec exacto). Determinista (semilla por llamada y canal); duración idéntica al audio limpio. SNR medida: 19.99 a 20.01 dB, que coincide con el objetivo por construcción: valida el código, **no** el realismo. Los 20 dB son un escenario moderado elegido por la autora, no un valor medido en llamadas reales; en la escucha del piloto la voz seguía entendiéndose.
 - Respaldo: audio limpio, caché de turnos, versión telefónica y scripts en Drive. El audio no está en GitHub.
 
+## 4d. Fase 6e: transcripción por canal y WER
+
+**Archivos:** `src/transcribir_audio.py` (md5 `61b57a97…`), `src/calcular_wer.py` (md5 `840b2bbe…`), `data/transcripciones/` (texto, versionado) y `data/resultados/` (WER y diferencias frecuentes).
+
+- **Modelo y configuración:** `gpt-transcribe`, idioma `es`, **sin prompt ni palabras clave** (línea base: se mide lo que hace el modelo sin ayuda). Cada canal se transcribe por separado (asesor izquierdo, cliente derecho): 57 llamadas × 2 canales = 114 archivos por versión, sin diarización. Tarifa usada en el cálculo: US$ 0.0045 por minuto de audio (el costo real se confirma en el panel de OpenAI).
+- **Piloto con una llamada** antes del lote: la duración de lo transcrito coincidió con la del audio (razón 1.01 y 0.96), 17.3 min facturados ≈ US$ 0.08.
+- **Lote:** versión limpia 620.2 min ≈ US$ 2.79; versión telefónica 621.6 min ≈ US$ 2.80 (la llamada del piloto, en sus dos versiones, no se repitió: 112 de 114 archivos por versión). Reanudable, 4 hilos. Los costos salen de duración × tarifa, no del cobro.
+- **Defecto de la voz sintética (hallado por la transcripción):** 2 turnos salieron de 0.4 s con ≈ 50 palabras de guion (L002155 turno 16 y L001677 turno 10). Se borraron sus mp3 del caché, se volvieron a sintetizar, se rehicieron los FLAC (limpio y telefónico) y se volvió a transcribir esas 2 llamadas (≈ US$ 0.09). Control posterior: 1.5 a 4.5 palabras por segundo en ambos turnos. **Los md5 de esos 4 FLAC cambiaron.** `sintetizar_audio.py` no valida la duración por turno: queda como mejora.
+- **Normalización antes del WER** (se aplica igual al guion y a la transcripción; fija y declarada antes del nivel 3):
+  1. *Crudo:* minúsculas, sin puntuación, y DNI/placa deletreados (rachas de 3 o más dígitos o letras sueltas) unidos en una sola palabra.
+  2. *+ números:* separadores de miles fuera; números en palabras pasan a dígitos con `text2num` (`ciento setenta y ocho` = `178`); «uno» no se convierte (suele ser pronombre).
+  3. *+ equivalencias:* `auto segura` = `autosegura`, `chao` = `chau`, y se ignoran las tildes. Estas reglas salieron de revisar las diferencias más repetidas (como los archivos GLM del NIST). No se tocaron los nombres propios (Huamán/Guamán cuentan como error).
+  Los tres niveles se reportan siempre juntos. Respaldo: las buenas prácticas piden normalizar los números a una forma común en ambos lados, documentar la normalización completa y reportar la sensibilidad.
+- **Resultados** (WER = (sustituidas + omitidas + insertadas) / palabras de referencia; 57 llamadas, 114 canales por versión):
+
+| Versión | Canal | 1) crudo | 2) + números | 3) + equiv. | Sust. | Omit. | Inser. |
+|---|---|---|---|---|---|---|---|
+| Limpia | ambos | 1.56 % | 1.34 % | **1.09 %** | 94 | 322 | 24 |
+| Limpia | asesor | 1.56 % | 1.45 % | 1.08 % | 36 | 187 | 7 |
+| Limpia | cliente | 1.55 % | 1.22 % | 1.11 % | 58 | 135 | 17 |
+| Telefónica | ambos | 1.82 % | 1.60 % | **1.37 %** | 119 | 313 | 117 |
+| Telefónica | asesor | 1.56 % | 1.44 % | 1.09 % | 41 | 183 | 7 |
+| Telefónica | cliente | 2.10 % | 1.79 % | 1.68 % | 78 | 130 | 110 |
+| Telefónica sin L012170 cliente | ambos | 1.69 % | 1.48 % | 1.24 % | 117 | 313 | 65 |
+
+- **Lectura:** (a) el error dominante son las **omisiones** (322 de 440 errores en la versión limpia): el modelo casi no inventa, pero se salta frases cortas; (b) el efecto de la simulación telefónica es pequeño (+0.28 puntos) y está casi todo en el canal del cliente; (c) en la telefónica hay **un evento aislado**: L012170 cliente repite 52 palabras (1 de 114 archivos, causa desconocida), que explica ≈ 0.13 de esos 0.28 puntos; (d) entre las 20 diferencias más repetidas tras la normalización, ≈ 40 % son nombres propios, lugares y correos (huamán→guamán, «Perú» como «pu»), ≈ 38 % son errores reales de palabra (dni→vin, autosegura→autoseguro) y ≈ 23 % son de formato.
+- **Costo total de transcripción** (referencia, por duración × tarifa): ≈ US$ 5.8 (piloto 0.08 + limpia 2.79 + reparación 0.09 + diagnóstico aislado 0.01 + telefónica 2.80). Pendiente anotar la cifra exacta del panel.
+- **Diagnóstico de omisiones (no entra al WER):** se transcribieron aparte 14 turnos con frases omitidas (`data/transcripciones/aislado/`): en 0 de 14 el modelo recuperó la frase. Eso **no** distingue entre «el audio no la contiene» y «el modelo la omite». Se mide de punta a punta en la fase 7 (extractor sobre guion frente a extractor sobre transcripción).
+- **Lecciones:** (1) guardar la respuesta del SDK exige serializarla a JSON (`_a_json`); (2) probar siempre una llamada antes de un lote de pago; (3) la transcripción sirvió también como control de calidad de la voz: sin ella los 2 turnos de 0.4 s habrían pasado inadvertidos.
+
 ## 5. Limitaciones conocidas (hay que declararlas en el informe)
 
 1. **Los hallazgos están sembrados.** El alza de tarifa de julio, el problema de siniestros en Arequipa, el CRM con ~28 % de errores y las diferencias por nivel de asesor se programaron a propósito. El valor del proyecto es probar que el método los recupera, no "descubrirlos".
@@ -113,15 +144,14 @@ Diseño final y resultado. Difiere del diseño inicial en tres puntos: se usaron
 10. **Poca variedad de voces y de dinámica.** Cuatro voces (dos de asesor, dos de cliente); sin interrupciones ni solapamiento. Las esperas son silencios artificiales de 3 a 7 s tras una frase de espera, no un dato.
 11. **La emoción de la voz es aproximada.** El ánimo viene de la verdad de terreno por llamada (inicio en la primera mitad, fin en la segunda), no por turno, y su efecto en la voz se verificó solo por oído en 3 llamadas.
 12. **Transcripción por canal:** cada canal tiene tramos largos en los que solo hay silencio (versión limpia) o ruido (telefónica). Un ASR puede inventar texto ahí; hay que vigilarlo al contar errores.
+13. **El WER de 1.09 % es de voz sintética limpia**, sin acentos reales, disfluencias ni solapamiento. Dice que la transcripción no es el cuello de botella en condiciones ideales; no estima el error en llamadas reales.
+14. **La simulación telefónica casi no estresa al modelo** (≈ 0.5 % de las palabras cambian frente a la limpia, con SNR de 20 dB). No presentarla como prueba de robustez ante ruido. Una prueba con SNR más baja (por ejemplo 10 dB, ≈ US$ 0.5 sobre 10 llamadas) queda opcional.
+15. **Omisiones de frases cortas sin causa confirmada** (audio o ASR). Afecta sobre todo a frases del cliente que expresan intención o motivo; su efecto real se mide en la fase 7.
+16. **La normalización sesga el WER hacia arriba** en un residuo de formato (agrupación de dígitos, «1» frente a «un»), sobre todo en el canal telefónico del cliente. Es un sesgo conservador y está declarado. Quedan ≈ 40 inserciones pequeñas del canal cliente telefónico sin examinar (sospecha: agrupación de dígitos).
 
 ## 6. Pendientes y cosas a recordar
 
-- **Fase 6e (transcripción y WER), plan.** El audio y el texto de referencia ya están hechos (sección 4c):
-  - Verificar en la fuente oficial el modelo de transcripción, su precio y las fechas de retiro (lo manejado hasta ahora es de fuentes secundarias). Probar primero con **una** llamada.
-  - Transcribir **cada canal por separado** (asesor izquierdo, cliente derecho): así no hace falta diarización. Cada archivo mono dura lo mismo que la llamada, de modo que los minutos facturados se duplican (314 min × 2 canales por versión).
-  - WER por hablante, en la versión limpia y en la telefónica, contra `texto_hablado`. Hace falta un normalizador de números y entidades (dígitos frente a palabras; «ABC 123» frente a «A B C uno dos tres»).
-  - Comparación pareada: extractor sobre `texto_hablado` (control) frente al extractor sobre la transcripción (tratamiento), ambos contra la verdad de terreno. Con 57 llamadas los intervalos son anchos: reportar **cuántas llamadas cambian de respuesta**, no diferencias porcentuales.
-  - Vigilar texto inventado por el ASR en los tramos de un canal donde solo hay ruido o silencio.
+- **Fase 6e (transcripción y WER): hecha** (ver sección 4d). Queda para la fase 7 la **comparación pareada**: extractor sobre `texto_hablado` (control) frente al extractor sobre la transcripción (tratamiento), ambos contra la verdad de terreno. Con 57 llamadas los intervalos son anchos: reportar **cuántas llamadas cambian de respuesta**, no diferencias porcentuales, y medir ahí el efecto de las frases omitidas.
 - **Auditoría manual de ~20 diálogos indirectos**, a ciegas respecto de la etiqueta, para estimar el techo de precisión por ambigüedad del propio diálogo.
 - **Para el dashboard:** hallazgo operativo a mostrar: ocupación de 68 % con nivel de servicio de 70 % (mala distribución de asesores por hora: a las 10 h el nivel de servicio es 37 %, a las 18 h es 97 %). Mayo y junio rondan 83 % de nivel de servicio y 6–7 % de abandono; julio cae a 55 % y 21 %.
 - **Seguridad:** la clave de OpenAI vive solo en *Secrets* de Colab. No se escribe en el código, en el notebook ni en el repositorio. Tampoco el token de GitHub. Conviene tener un límite mensual bajo en el panel de facturación de OpenAI.
